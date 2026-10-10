@@ -7,6 +7,13 @@
   <meta name="robots" content="noindex, nofollow">
   <title>Shepherd Locals · Coupons</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icon-192.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Shepherd Coupons">
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
 <body>
@@ -20,6 +27,8 @@
     <div class="field"><label for="loginPin">PIN</label><input id="loginPin" type="password" inputmode="numeric" pattern="\d*" maxlength="8" required></div>
     <div id="loginMsg"></div>
     <button class="btn primary big" type="submit">Log in</button>
+    <button type="button" id="installBtn" class="btn light big hidden" style="margin-top:.6rem">📲 Install as an app</button>
+    <p id="iosHint" class="small muted hidden" style="text-align:center;margin:.6rem 0 0">To install on iPhone/iPad: tap <b>Share</b> ⬆️ then <b>Add to Home Screen</b>.</p>
     <p id="configWarn" class="alert warn hidden">Setup not finished: paste your Apps Script web-app URL into <code>app.js</code> (API_URL).</p>
   </form>
 </section>

@@ -18,7 +18,7 @@ h2 { font-size: 1.25rem; } h3 { font-size: 1.05rem; color: var(--slate); }
 
 /* top bar + nav */
 .stickyhead { position: sticky; top: 0; z-index: 10; }
-.topbar { background: var(--orange); color: #fff; display: flex; align-items: center; gap: .75rem; padding: .6rem 1rem; }
+.topbar { background: var(--orange); color: #fff; display: flex; align-items: center; gap: .75rem; padding: .6rem 1rem; padding-top: max(.6rem, env(safe-area-inset-top)); }
 .brand { font-weight: 800; letter-spacing: .02em; font-size: 1.05rem; white-space: nowrap; }
 .brand span { font-weight: 500; opacity: .85; }
 .who { margin-left: auto; font-size: .85rem; text-align: right; line-height: 1.2; }

@@ -15,8 +15,15 @@ const when = (iso) => iso ? new Date(iso).toLocaleString('en-GB', { timeZone: TZ
 const normSerial = (s) => String(s || '').trim().toUpperCase().replace(/\s+/g, '');
 const isBookletId = (s) => /^(GLD|SLV)-\d{4}-B\d{2}$/.test(s);
 
+// Login survives closing the app (installed or not) but never longer than the server session (6 h).
+const SESSION_MS = 6 * 3600 * 1000;
+const sess = {
+  get(k) { try { if (Number(localStorage.getItem('sl_exp') || 0) < Date.now()) { this.clear(); return null; } return localStorage.getItem(k); } catch (e) { return null; } },
+  save(token, user) { try { localStorage.setItem('sl_token', token); localStorage.setItem('sl_user', JSON.stringify(user)); localStorage.setItem('sl_exp', String(Date.now() + SESSION_MS)); } catch (e) {} },
+  clear() { try { ['sl_token', 'sl_user', 'sl_exp'].forEach((k) => localStorage.removeItem(k)); } catch (e) {} },
+};
 const state = {
-  token: sessionStorage.getItem('sl_token'), user: JSON.parse(sessionStorage.getItem('sl_user') || 'null'),
+  token: sess.get('sl_token'), user: JSON.parse(sess.get('sl_user') || 'null'),
   customers: [], booklets: [], tx: [], txStaff: [],
   sell: { type: 'Full Booklet', items: [], method: null, status: null, priceTouched: false },
 };
@@ -84,7 +91,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
     const r = await api('login', { name: $('#loginName').value, pin: $('#loginPin').value });
     if (!r.ok) throw fail(r);
     state.token = r.token; state.user = r.user;
-    sessionStorage.setItem('sl_token', r.token); sessionStorage.setItem('sl_user', JSON.stringify(r.user));
+    sess.save(r.token, r.user);
     $('#loginPin').value = '';
     startApp();
   } catch (err) { $('#loginMsg').innerHTML = `<div class="alert bad">${esc(err.message)}</div>`; }
@@ -95,7 +102,7 @@ $('#logoutBtn').addEventListener('click', () => logout(false));
 function logout(expired) {
   if (!expired && state.token) api('logout').catch(() => {});
   stopAllScanners();
-  state.token = null; state.user = null; sessionStorage.clear();
+  state.token = null; state.user = null; sess.clear();
   $('#appView').classList.add('hidden'); $('#loginView').classList.remove('hidden');
   if (expired) $('#loginMsg').innerHTML = '<div class="alert warn">Your session expired. Please log in again.</div>';
 }
@@ -637,17 +644,18 @@ async function loadStaff() {
     const r = await api('listStaff'); if (!r.ok) throw fail(r);
     state.staff = r.staff;
     $('#staffTable').innerHTML = `<thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Last login</th><th>Last changed</th><th></th></tr></thead><tbody>` +
-      r.staff.map((s) => `<tr${s.active ? '' : ' style="opacity:.55"'}><td><b>${esc(s.name)}</b>${s.name.toLowerCase() === state.user.name.toLowerCase() ? ' <span class="chip">you</span>' : ''}</td>
+      r.staff.map((s) => `<tr${s.active ? '' : ' style="opacity:.55"'}><td><b>${esc(s.name)}</b>${s.name.toLowerCase() === state.user.name.toLowerCase() ? ' <span class="chip">you</span>' : ''}${s.owner ? ' <span class="chip warn">Owner 🔒</span>' : ''}</td>
         <td><span class="chip ${s.role === 'Manager' ? 'warn' : ''}">${esc(s.role)}</span></td>
         <td>${s.active ? '<span class="chip ok">Active</span>' : '<span class="chip bad">Deactivated</span>'}</td>
         <td class="small">${esc(when(s.last_login))}</td>
         <td class="small">${s.updated_at ? esc(when(s.updated_at)) + (s.updated_by ? '<div class="muted">by ' + esc(s.updated_by) + '</div>' : '') : '—'}</td>
-        <td><button class="btn light sm" data-staff="${esc(s.name)}">Edit</button></td></tr>`).join('') + '</tbody>';
+        <td>${s.owner && s.name.toLowerCase() !== state.user.name.toLowerCase() ? '<span class="small muted">Protected</span>' : `<button class="btn light sm" data-staff="${esc(s.name)}">${s.owner ? 'Change PIN' : 'Edit'}</button>`}</td></tr>`).join('') + '</tbody>';
     $$('[data-staff]').forEach((b) => b.addEventListener('click', () => staffModal(state.staff.find((s) => s.name === b.dataset.staff))));
   } catch (err) { $('#staffTable').innerHTML = `<tr><td class="alert bad">${esc(err.message)}</td></tr>`; }
 }
 function staffModal(s) {
   const isSelf = s && s.name.toLowerCase() === state.user.name.toLowerCase();
+  if (s && s.owner) return ownerPinModal(s);
   modal(`<h2>${s ? 'Edit ' + esc(s.name) : 'Add staff member'}</h2>
     <div class="field"><label>Name (what they type to log in)</label><input id="sfName" value="${esc(s?.name)}" autocomplete="off" maxlength="30"></div>
     <div class="field"><label>Role</label><div class="seg" id="sfRole"><button data-v="Front Desk">Front Desk</button><button data-v="Manager">Manager</button></div>
@@ -683,6 +691,40 @@ function staffModal(s) {
       } catch (err) { msg(err.message); busy(e.currentTarget, false); }
     };
   });
+}
+
+function ownerPinModal(s) {
+  modal(`<h2>Owner account — ${esc(s.name)} 🔒</h2>
+    <p class="small muted">This account is protected: no one can delete, deactivate, demote or rename it, and other managers cannot change its PIN. You can change your own PIN here.</p>
+    <div class="field"><label>New PIN (4–8 digits)</label><input id="opPin" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password"></div>
+    <div class="field"><label>Repeat new PIN</label><input id="opPin2" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password"></div>
+    <div id="opMsg"></div>
+    <div class="row"><button class="btn light" data-close>Cancel</button><button class="btn primary" id="opSave">Change PIN</button></div>`, (m, close) => {
+    $('#opSave', m).onclick = async (e) => {
+      const pin = $('#opPin', m).value.trim(), pin2 = $('#opPin2', m).value.trim();
+      const msg = (t) => { $('#opMsg', m).innerHTML = `<div class="alert bad">${esc(t)}</div>`; };
+      if (!/^\d{4,8}$/.test(pin)) return msg('PIN must be 4 to 8 digits.');
+      if (pin !== pin2) return msg('The two PINs do not match.');
+      busy(e.currentTarget, true, 'Saving…');
+      try { const r = await api('saveStaff', { mode: 'update', name: s.name, pin }); if (!r.ok) throw fail(r); close(); toast('Your PIN has been changed'); loadStaff(); }
+      catch (err) { msg(err.message); busy(e.currentTarget, false); }
+    };
+  });
+}
+
+// ------------------------------------------------------------------ installable app (PWA)
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (!isStandalone()) $('#installBtn').classList.remove('hidden'); });
+$('#installBtn').addEventListener('click', async () => {
+  if (!installEvt) return;
+  installEvt.prompt(); try { await installEvt.userChoice; } catch (e) {}
+  installEvt = null; $('#installBtn').classList.add('hidden');
+});
+window.addEventListener('appinstalled', () => { $('#installBtn').classList.add('hidden'); toast('Installed — open Shepherd Coupons from your home screen.'); });
+if (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+  if (!isStandalone()) $('#iosHint').classList.remove('hidden');
 }
 
 // ------------------------------------------------------------------ boot
