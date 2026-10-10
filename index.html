@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#FF6600">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Shepherd Locals · Coupons</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+
+<!-- LOGIN -->
+<section id="loginView" class="login-wrap">
+  <form id="loginForm" class="card login" autocomplete="off">
+    <h1>SHEPHERD LOCALS</h1>
+    <p class="muted">Coupon sales &amp; redemption</p>
+    <div class="field"><label for="loginName">Your name</label><input id="loginName" required autocapitalize="words"></div>
+    <div class="field"><label for="loginPin">PIN</label><input id="loginPin" type="password" inputmode="numeric" pattern="\d*" maxlength="8" required></div>
+    <div id="loginMsg"></div>
+    <button class="btn primary big" type="submit">Log in</button>
+    <p id="configWarn" class="alert warn hidden">Setup not finished: paste your Apps Script web-app URL into <code>app.js</code> (API_URL).</p>
+  </form>
+</section>
+
+<!-- APP -->
+<section id="appView" class="hidden">
+  <div class="stickyhead">
+  <header class="topbar">
+    <div class="brand">SHEPHERD LOCALS <span>Coupons</span></div>
+    <div class="who"><b id="whoName"></b><span id="whoRole" class="small"></span></div>
+    <button class="btn-ghost" id="logoutBtn">Log out</button>
+  </header>
+  <nav class="tabs" id="tabs"></nav>
+  </div>
+  <main>
+
+    <!-- REDEEM -->
+    <div id="tab-redeem" class="tab">
+      <div class="card">
+        <h2>Redeem a coupon</h2>
+        <p class="muted small">Scan the <b>QR code on the front</b> of the coupon, or type the serial printed beside it.</p>
+        <div id="redeemScanner" class="scanner"></div>
+        <div class="scan-actions">
+          <button class="btn primary" id="redeemCamBtn">📷 Start camera</button>
+        </div>
+        <form class="manual" id="redeemManual">
+          <input id="redeemSerial" placeholder="GLD-2026-XXXX-XXX" autocomplete="off" spellcheck="false">
+          <button class="btn" type="submit">Check</button>
+        </form>
+        <div id="redeemResult"></div>
+      </div>
+    </div>
+
+    <!-- SELL -->
+    <div id="tab-sell" class="tab hidden">
+      <div class="card">
+        <h2>1 · What are you selling?</h2>
+        <div class="seg" id="sellType">
+          <button data-v="Full Booklet" class="on">Full booklet(s)</button>
+          <button data-v="Single Coupons">Single coupons</button>
+        </div>
+
+        <div id="bookletMode" style="margin-top:1rem">
+          <label>Tap the booklet(s) to sell — or scan any coupon from the booklet</label>
+          <div class="booklet-pick" id="bookletPick"></div>
+        </div>
+        <div id="singleMode" class="hidden" style="margin-top:1rem">
+          <label>Scan each coupon (QR code on the front) — or scan a booklet cover to add the whole booklet</label>
+        </div>
+        <div id="sellScanner" class="scanner" style="margin-top:.6rem"></div>
+        <div class="scan-actions"><button class="btn light" id="sellCamBtn">📷 Scan</button></div>
+        <form class="manual" id="sellManual">
+          <input id="sellSerial" placeholder="Coupon serial or booklet (GLD-2026-B01)" autocomplete="off" spellcheck="false">
+          <button class="btn" type="submit">Add</button>
+        </form>
+        <div id="sellMsg"></div>
+        <ul class="cart" id="cart"></ul>
+        <div id="cartSummary" class="muted small"></div>
+      </div>
+
+      <div class="card">
+        <h2>2 · Customer</h2>
+        <div class="row">
+          <div><label for="custSelect">Select customer</label><select id="custSelect"></select></div>
+          <div style="flex:0 0 auto"><button class="btn light" id="newCustBtn" type="button">+ New customer</button></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>3 · Price &amp; payment</h2>
+        <div class="pricebox">
+          <div id="rateHint" class="small muted">Select a customer and add items first.</div>
+          <div class="row" style="margin-top:.5rem">
+            <div><label for="unitPrice" id="unitPriceLabel">Price (GHS)</label>
+              <input id="unitPrice" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Required"></div>
+            <div><label>Total</label><div class="total num" id="saleTotal">GHS 0.00</div></div>
+          </div>
+          <div id="overrideWarn" class="alert warn hidden">Price differs from the agreed rate — this sale will be flagged as an <b>override</b>.</div>
+        </div>
+        <div class="field" style="margin-top:1rem"><label>Payment method</label>
+          <div class="seg" id="payMethod"><button data-v="Cash">Cash</button><button data-v="MoMo">MoMo</button><button data-v="Bank">Bank</button><button data-v="Invoice/Credit">Invoice</button></div></div>
+        <div class="field"><label>Payment status</label>
+          <div class="seg" id="payStatus"><button data-v="Paid">Paid</button><button data-v="Part-paid">Part-paid</button><button data-v="Unpaid">Unpaid</button></div></div>
+        <div class="field hidden" id="amountPaidWrap"><label for="amountPaid">Amount received now (GHS)</label><input id="amountPaid" type="number" inputmode="decimal" min="0" step="0.01"></div>
+        <div class="field"><label for="saleNotes">Notes (optional)</label><input id="saleNotes" placeholder="e.g. invoice no., staff list"></div>
+        <button class="btn primary big" id="confirmSale">Confirm sale</button>
+        <div id="saleResult"></div>
+      </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="tab-dash" class="tab hidden">
+      <div class="row" style="align-items:center;margin-bottom:.6rem"><h2 style="margin:0">Dashboard</h2>
+        <div style="flex:0 0 auto"><button class="btn light sm" id="dashRefresh">↻ Refresh</button></div></div>
+      <div id="dashBody"><p class="muted">Loading…</p></div>
+    </div>
+
+    <!-- CUSTOMERS -->
+    <div id="tab-customers" class="tab hidden">
+      <div class="card">
+        <div class="row" style="align-items:center"><h2 style="margin:0">Customers &amp; agreed rates</h2>
+          <div style="flex:0 0 auto"><button class="btn primary sm" id="addCustBtn2">+ Add customer</button></div></div>
+        <p class="muted small">Rates are optional. Leave blank if a company has no agreed rate — the front desk will then type the price at each sale.</p>
+        <div class="tablewrap"><table id="custTable"></table></div>
+      </div>
+    </div>
+
+    <!-- BOOKLETS -->
+    <div id="tab-booklets" class="tab hidden">
+      <div class="card"><h2>Booklets</h2><div class="booklet-pick" id="bookletList"></div></div>
+      <div class="card hidden" id="bookletDetailCard"></div>
+    </div>
+
+    <!-- STAFF (manager) -->
+    <div id="tab-staff" class="tab hidden">
+      <div class="card">
+        <div class="row" style="align-items:center"><h2 style="margin:0">Staff &amp; roles</h2>
+          <div style="flex:0 0 auto"><button class="btn primary sm" id="addStaffBtn">+ Add staff</button></div></div>
+        <p class="muted small"><b>Front Desk</b>: Redeem + Sell only. <b>Manager</b>: everything, including revenue, customers' agreed rates and this screen.
+          Changes apply immediately — a deactivated person is logged out on their next tap.</p>
+        <div class="tablewrap"><table id="staffTable"><tr><td class="muted">Loading…</td></tr></table></div>
+      </div>
+    </div>
+
+    <!-- LOG -->
+    <div id="tab-log" class="tab hidden">
+      <div class="card">
+        <h2>Transaction log</h2>
+        <div class="row">
+          <div><label>From</label><input type="date" id="fFrom"></div>
+          <div><label>To</label><input type="date" id="fTo"></div>
+          <div><label>Type</label><select id="fKind"><option value="">All</option><option>Sale</option><option>Redemption</option></select></div>
+          <div><label>Tier</label><select id="fTier"><option value="">All</option><option>GOLD</option><option>SILVER</option></select></div>
+        </div>
+        <div class="row" style="margin-top:.6rem">
+          <div><label>Customer</label><select id="fCust"><option value="">All</option></select></div>
+          <div><label>Staff</label><select id="fStaff"><option value="">All</option></select></div>
+          <div><label>Serial / sale ID contains</label><input id="fSerial"></div>
+          <div><label>Price</label><select id="fOverride"><option value="">All</option><option value="1">Overrides only</option></select></div>
+        </div>
+        <div class="row" style="margin:.8rem 0 .6rem;align-items:center">
+          <div id="logCount" class="muted small"></div>
+          <div style="flex:0 0 auto"><button class="btn light sm" id="logRefresh">↻ Refresh</button> <button class="btn sm" id="logCsv">⬇ Export CSV</button></div>
+        </div>
+        <div class="tablewrap"><table id="logTable"></table></div>
+      </div>
+    </div>
+
+  </main>
+</section>
+
+<div id="modalRoot"></div>
+<script src="app.js"></script>
+</body>
+</html>
