@@ -1,7 +1,7 @@
 /* Shepherd Locals Coupons — service worker.
    App screens: network-first (updates show immediately), cache only as an offline fallback.
    Coupon data (Apps Script API) is NEVER cached or intercepted. */
-const CACHE = 'shepherd-coupons-v1';
+const CACHE = 'shepherd-coupons-v2';
 const SHELL = ['./', './index.html', './app.js', './styles.css', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './apple-touch-icon.png',
   'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js'];

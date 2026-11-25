@@ -25,7 +25,7 @@ const sess = {
 const state = {
   token: sess.get('sl_token'), user: JSON.parse(sess.get('sl_user') || 'null'),
   customers: [], booklets: [], tx: [], txStaff: [],
-  sell: { type: 'Full Booklet', items: [], method: null, status: null, priceTouched: false },
+  sell: { items: [], prices: {}, touched: {}, method: null, status: null },
 };
 
 // ------------------------------------------------------------------ API
@@ -63,7 +63,7 @@ function modal(html, onMount) {
 function confirmBox(title, bodyHtml, okLabel = 'Confirm', okClass = 'primary') {
   return new Promise((resolve) => {
     modal(`<h2>${esc(title)}</h2><div>${bodyHtml}</div>
-      <div class="row" style="margin-top:1rem"><button class="btn light" data-close id="cbNo">Cancel</button>
+      <div class="row" style="margin-top:1rem"><button class="btn quiet" data-close id="cbNo">Cancel</button>
       <button class="btn ${okClass}" id="cbYes">${esc(okLabel)}</button></div>`, (m, close) => {
       $('#cbYes', m).onclick = () => { close(); resolve(true); };
       $('#cbNo', m).onclick = () => { close(); resolve(false); };
@@ -72,11 +72,21 @@ function confirmBox(title, bodyHtml, okLabel = 'Confirm', okClass = 'primary') {
 }
 
 // ------------------------------------------------------------------ login / shell
+const ICONS = {
+  redeem: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
+  sell: '<path d="M3 7.5V6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v1.5a2.5 2.5 0 0 0 0 5V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5.5a2.5 2.5 0 0 0 0-5z"/><path d="M15 5v14" stroke-dasharray="2 2.2"/>',
+  dash: '<path d="M4 20h16M7 16v-5M12 16V6M17 16v-8"/>',
+  customers: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20v-.5A5.5 5.5 0 0 1 8 14h2a5.5 5.5 0 0 1 5.5 5.5v.5M16 4.3a3.5 3.5 0 0 1 0 7.4M18.5 14.2A5.5 5.5 0 0 1 21.5 19v1"/>',
+  booklets: '<path d="M5 18.5V5.5A2.5 2.5 0 0 1 7.5 3H19v15H7.5A2.5 2.5 0 0 0 5 20.5 2.5 2.5 0 0 0 7.5 23H19"/><path d="M9 7h6"/>',
+  log: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r=".6"/><circle cx="4.5" cy="12" r=".6"/><circle cx="4.5" cy="18" r=".6"/>',
+  staff: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.1-7.5 9.5-4.3-1.4-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
+};
+const svg = (paths, cls = '') => `<svg viewBox="0 0 24 24" class="${cls}" aria-hidden="true">${paths}</svg>`;
 const TABS = [
   { id: 'redeem', label: 'Redeem', roles: ['Front Desk', 'Manager'] },
   { id: 'sell', label: 'Sell', roles: ['Front Desk', 'Manager'] },
-  { id: 'dash', label: 'Dashboard', roles: ['Manager'] },
-  { id: 'customers', label: 'Customers', roles: ['Manager'] },
+  { id: 'dash', label: 'Dashboard', short: 'Stats', roles: ['Manager'] },
+  { id: 'customers', label: 'Customers', short: 'Clients', roles: ['Manager'] },
   { id: 'booklets', label: 'Booklets', roles: ['Manager'] },
   { id: 'log', label: 'Log', roles: ['Manager'] },
   { id: 'staff', label: 'Staff', roles: ['Manager'] },
@@ -110,8 +120,10 @@ function logout(expired) {
 function startApp() {
   $('#loginView').classList.add('hidden'); $('#appView').classList.remove('hidden');
   $('#whoName').textContent = state.user.name; $('#whoRole').textContent = state.user.role;
+  $('#whoInitial').textContent = (state.user.name || '?').trim().charAt(0).toUpperCase();
   const tabs = TABS.filter((t) => t.roles.includes(state.user.role));
-  $('#tabs').innerHTML = tabs.map((t) => `<button data-tab="${t.id}">${t.label}</button>`).join('');
+  $('#tabs').innerHTML = tabs.map((t) => `<button data-tab="${t.id}">${svg(ICONS[t.id])}<span class="lbl">${t.label}</span>${t.short ? `<span class="lbl-s">${t.short}</span>` : ''}</button>`).join('');
+  document.body.dataset.tabs = tabs.length;
   $$('#tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
   loadCustomers(); loadBooklets();
   showTab('redeem');
@@ -119,7 +131,8 @@ function startApp() {
 
 function showTab(id) {
   stopAllScanners();
-  $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id));
+  $$('#tabs button').forEach((b) => { b.classList.toggle('active', b.dataset.tab === id); b.toggleAttribute('aria-current', b.dataset.tab === id); });
+  window.scrollTo(0, 0);
   $$('.tab').forEach((t) => t.classList.toggle('hidden', t.id !== 'tab-' + id));
   if (id === 'dash') loadDashboard();
   if (id === 'customers') renderCustomerTable();
@@ -153,7 +166,7 @@ async function startScanner(elId, btn, onCode) {
         onCode(text);
       }, () => {});
     document.getElementById(elId).classList.add('live');
-    if (btn) btn.textContent = '■ Stop camera';
+    if (btn) btn.textContent = 'Stop camera';
   } catch (err) {
     delete scanners[elId];
     toast('Camera unavailable: ' + (err.message || err) + '. Use manual entry.', 4000);
@@ -164,7 +177,7 @@ async function stopScanner(elId) {
   delete scanners[elId];
   try { await s.sc.stop(); s.sc.clear(); } catch (e) {}
   document.getElementById(elId).classList.remove('live');
-  if (s.btn) s.btn.textContent = s.btn.id === 'redeemCamBtn' ? '📷 Start camera' : '📷 Scan';
+  if (s.btn) s.btn.textContent = s.btn.id === 'redeemCamBtn' ? 'Start camera' : 'Scan';
 }
 function pauseScanner(elId, on) {
   const s = scanners[elId]; if (!s) return;
@@ -178,21 +191,22 @@ $('#redeemManual').addEventListener('submit', (e) => {
   e.preventDefault(); const v = $('#redeemSerial').value; if (v.trim()) handleRedeemCode(v);
 });
 
+const V_OK = '<path d="M5 12.5l4.5 4.5L19 7.5"/>', V_BAD = '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>', V_WARN = '<path d="M12 7v6.5M12 17.2v.3"/>', V_TURN = '<path d="M9 14l-4-4 4-4"/><path d="M5 10h9.5a4.5 4.5 0 0 1 0 9H11"/>';
 const VERDICTS = {
-  VALID: { cls: 'ok', icon: '✅', title: 'VALID' },
-  REDEEMED: { cls: 'ok', icon: '✅', title: 'REDEEMED' },
-  ALREADY_REDEEMED: { cls: 'bad', icon: '❌', title: 'ALREADY REDEEMED' },
-  NOT_SOLD: { cls: 'bad', icon: '❌', title: 'NOT SOLD', msg: 'This coupon is still in stock — it was never sold. Do not accept it.' },
-  VOID: { cls: 'bad', icon: '❌', title: 'VOID', msg: 'This coupon has been cancelled by the manager. Do not accept it.' },
-  UNKNOWN: { cls: 'bad', icon: '❌', title: 'UNKNOWN SERIAL', msg: 'Not in the register. Do not accept it.' },
-  INVALID: { cls: 'warn', icon: '⚠️', title: 'CHECK THE SERIAL', msg: 'This is not a valid Shepherd Locals serial. Re-scan or re-type it carefully.' },
-  MAPS_QR: { cls: 'warn', icon: '↩️', title: 'WRONG SIDE', msg: 'That is the Google Maps QR on the back. Turn the coupon over and scan the QR code next to the serial number.' },
+  VALID: { cls: 'ok', icon: V_OK, title: 'VALID' },
+  REDEEMED: { cls: 'ok', icon: V_OK, title: 'REDEEMED' },
+  ALREADY_REDEEMED: { cls: 'bad', icon: V_BAD, title: 'ALREADY REDEEMED' },
+  NOT_SOLD: { cls: 'bad', icon: V_BAD, title: 'NOT SOLD', msg: 'This coupon is still in stock — it was never sold. Do not accept it.' },
+  VOID: { cls: 'bad', icon: V_BAD, title: 'VOID', msg: 'This coupon has been cancelled by the manager. Do not accept it.' },
+  UNKNOWN: { cls: 'bad', icon: V_BAD, title: 'UNKNOWN SERIAL', msg: 'Not in the register. Do not accept it.' },
+  INVALID: { cls: 'warn', icon: V_WARN, title: 'CHECK THE SERIAL', msg: 'This is not a valid Shepherd Locals serial. Re-scan or re-type it carefully.' },
+  MAPS_QR: { cls: 'warn', icon: V_TURN, title: 'WRONG SIDE', msg: 'That is the Google Maps QR on the back. Turn the coupon over and scan the QR code next to the serial number.' },
 };
 
 async function handleRedeemCode(raw) {
   pauseScanner('redeemScanner', true);
   const box = $('#redeemResult');
-  box.innerHTML = '<div class="result"><span class="spinner" style="border-color:#ccc;border-top-color:var(--orange)"></span> Checking…</div>';
+  box.innerHTML = '<div class="result checking"><span class="spinner dark"></span> Checking…</div>';
   try {
     const r = await api('lookup', { serial: raw });
     if (!r.ok) throw fail(r);
@@ -205,7 +219,7 @@ function renderRedeemResult(verdict, c, serial) {
   let meta = '';
   if (c && (verdict === 'VALID' || verdict === 'REDEEMED')) {
     meta = `<div><span class="chip ${esc(c.tier)}">${esc(c.tier)}</span></div>
-            <div style="margin-top:.4rem">Sold to <b>${esc(c.sold_to || '—')}</b></div>
+            <div class="soldto">Sold to <b>${esc(c.sold_to || '—')}</b></div>
             <div class="small">Booklet ${esc(c.booklet_serial)} · coupon ${esc(c.coupon_no)}</div>`;
     if (verdict === 'REDEEMED') meta += `<div class="small">Redeemed ${esc(when(c.redeemed_at))} by ${esc(c.redeemed_by)}</div>`;
   } else if (c && verdict === 'ALREADY_REDEEMED') {
@@ -215,10 +229,11 @@ function renderRedeemResult(verdict, c, serial) {
     meta = `<div>${esc(v.msg || '')}</div>`;
   }
   const actions = verdict === 'VALID'
-    ? `<div class="actions"><button class="btn light big" id="rdCancel">Cancel</button><button class="btn ok big" id="rdConfirm">Confirm redemption</button></div>`
+    ? `<div class="actions"><button class="btn quiet big" id="rdCancel">Cancel</button><button class="btn ok big" id="rdConfirm">Confirm redemption</button></div>`
     : `<button class="btn primary big" id="rdNext">Scan next coupon</button>`;
-  $('#redeemResult').innerHTML = `<div class="result ${v.cls}"><div class="icon">${v.icon}</div><div class="title">${v.title}</div>
+  $('#redeemResult').innerHTML = `<div class="result ${v.cls}"><div class="icon">${svg(v.icon)}</div><div class="title">${v.title}</div>
       <div class="serial">${esc(serial)}</div><div class="meta">${meta}</div>${actions}</div>`;
+  if (window.innerWidth < 900) $('#redeemResult').scrollIntoView({ behavior: 'smooth', block: 'center' });
   const next = () => { $('#redeemResult').innerHTML = ''; $('#redeemSerial').value = ''; pauseScanner('redeemScanner', false); };
   if ($('#rdNext')) $('#rdNext').onclick = next;
   if ($('#rdCancel')) $('#rdCancel').onclick = next;
@@ -232,6 +247,8 @@ function renderRedeemResult(verdict, c, serial) {
 }
 
 // ------------------------------------------------------------------ SELL
+// One order can hold Gold and Silver booklets and single coupons together. The server receives one
+// "line" per (type, tier) — e.g. Gold booklets ×3, Silver booklets ×2, Silver singles ×4 — each with its own price.
 async function loadBooklets() {
   try { const r = await api('listBooklets'); if (r.ok) { state.booklets = r.booklets; renderBookletPick(); } } catch (e) {}
 }
@@ -239,174 +256,251 @@ async function loadCustomers() {
   try { const r = await api('listCustomers'); if (r.ok) { state.customers = r.customers; renderCustomerSelect(); } } catch (e) {}
 }
 
-function cartTier() { return state.sell.items[0]?.tier || null; }
+const TIER_ORDER = ['GOLD', 'SILVER'];
+const tierName = (t) => t === 'GOLD' ? 'Gold' : 'Silver';
+const LINE_DEFS = [
+  { type: 'Full Booklet', tier: 'GOLD' }, { type: 'Full Booklet', tier: 'SILVER' },
+  { type: 'Single Coupons', tier: 'GOLD' }, { type: 'Single Coupons', tier: 'SILVER' },
+];
+const lineKey = (type, tier) => type + '|' + tier;
+const isAvail = (b) => b.status === 'In Stock' && b.in_stock === COUPONS_PER_BOOKLET;
+const shortBk = (id) => id.slice(-3);              // GLD-2026-B03 -> B03
+
+function cartBooklets(tier) { return state.sell.items.filter((i) => i.kind === 'booklet' && (!tier || i.tier === tier)); }
+function cartSingles(tier) { return state.sell.items.filter((i) => i.kind === 'single' && (!tier || i.tier === tier)); }
+
+function orderLines() {
+  const cust = state.customers.find((x) => x.customer_id === $('#custSelect').value);
+  return LINE_DEFS.map((d) => {
+    const items = d.type === 'Full Booklet' ? cartBooklets(d.tier) : cartSingles(d.tier);
+    if (!items.length) return null;
+    const key = lineKey(d.type, d.tier);
+    const rate = cust ? cust[d.tier.toLowerCase() + (d.type === 'Full Booklet' ? '_booklet_rate' : '_single_rate')] ?? null : null;
+    const raw = state.sell.prices[key];
+    const price = raw === undefined || raw === '' ? null : Number(raw);
+    return { ...d, key, items, qty: items.length, rate, price,
+             unit: d.type === 'Full Booklet' ? 'booklet' : 'coupon',
+             label: `${tierName(d.tier)} ${d.type === 'Full Booklet' ? 'booklets' : 'single coupons'}`,
+             subtotal: price > 0 ? Math.round(price * items.length * 100) / 100 : 0,
+             override: rate !== null && price !== null && Math.abs(price - rate) >= 0.005 };
+  }).filter(Boolean);
+}
+function orderTotal(lines = orderLines()) { return Math.round(lines.reduce((a, l) => a + l.subtotal, 0) * 100) / 100; }
 
 function renderBookletPick() {
-  const s = state.sell, tier = cartTier();
-  $('#bookletPick').innerHTML = state.booklets.map((b) => {
-    const available = b.status === 'In Stock' && b.in_stock === COUPONS_PER_BOOKLET;
-    const on = s.items.some((i) => i.booklet_serial === b.booklet_serial);
-    const blocked = !available || (tier && tier !== b.tier && !on);
-    const label = available ? 'In stock' : esc(b.status) + (b.sold_to ? ' · ' + esc(b.sold_to) : '');
-    return `<button data-b="${esc(b.booklet_serial)}" class="${on ? 'on' : ''}" ${blocked ? 'disabled' : ''}>
-      <b>${esc(b.booklet_serial)}</b><span class="chip ${esc(b.tier)}">${esc(b.tier)}</span> <span class="small muted">${label}</span></button>`;
+  const el = $('#bookletPick'); if (!el) return;
+  if (!state.booklets.length) { el.innerHTML = '<p class="hint">Loading booklets…</p>'; return; }
+  el.innerHTML = TIER_ORDER.map((tier) => {
+    const all = state.booklets.filter((b) => b.tier === tier);
+    const avail = all.filter(isAvail).length, n = cartBooklets(tier).length;
+    return `<div class="tierblock ${tier}">
+      <div class="tb-head"><span class="medal ${tier}" aria-hidden="true"></span>
+        <div><b>${tierName(tier)}</b><span class="hint">${avail} of ${all.length} in stock</span></div>
+        <div class="stepper" role="group" aria-label="${tierName(tier)} booklets">
+          <button type="button" data-dec="${tier}" aria-label="One fewer ${tierName(tier)} booklet" ${n ? '' : 'disabled'}>−</button>
+          <output class="num" data-count="${tier}">${n}</output>
+          <button type="button" data-inc="${tier}" aria-label="One more ${tierName(tier)} booklet" ${n < avail ? '' : 'disabled'}>+</button>
+        </div></div>
+      <div class="bk-row">${all.map((b) => {
+        const on = state.sell.items.some((i) => i.kind === 'booklet' && i.booklet_serial === b.booklet_serial);
+        const ok = isAvail(b);
+        const why = ok ? 'In stock' : (b.status === 'Sold' ? 'Sold' + (b.sold_to ? ' to ' + b.sold_to : '') : b.status);
+        return `<button type="button" data-b="${esc(b.booklet_serial)}" class="bk ${on ? 'on' : ''}" ${ok ? '' : 'disabled'}
+          aria-pressed="${on}" title="${esc(b.booklet_serial)} · ${esc(why)}"><b>${esc(shortBk(b.booklet_serial))}</b><span>${ok ? (on ? 'Added' : 'Add') : esc(b.status === 'Sold' ? 'Sold' : 'Opened')}</span></button>`;
+      }).join('')}</div></div>`;
   }).join('');
-  $$('#bookletPick button').forEach((btn) => btn.addEventListener('click', () => toggleBooklet(btn.dataset.b)));
+  $$('#bookletPick [data-b]').forEach((btn) => btn.addEventListener('click', () => toggleBooklet(btn.dataset.b)));
+  $$('#bookletPick [data-inc]').forEach((btn) => btn.addEventListener('click', () => stepBooklets(btn.dataset.inc, +1)));
+  $$('#bookletPick [data-dec]').forEach((btn) => btn.addEventListener('click', () => stepBooklets(btn.dataset.dec, -1)));
 }
 
-function toggleBooklet(id) {
-  const s = state.sell;
-  $('#saleResult').innerHTML = '';
-  const i = s.items.findIndex((x) => x.booklet_serial === id);
-  if (i >= 0) s.items.splice(i, 1);
-  else {
-    const b = state.booklets.find((x) => x.booklet_serial === id);
-    if (!b) return sellMsg('bad', 'Unknown booklet ' + id);
-    if (!(b.status === 'In Stock' && b.in_stock === COUPONS_PER_BOOKLET)) return sellMsg('bad', `${id} is not available (${b.status}). Sell its remaining coupons as singles.`);
-    if (cartTier() && cartTier() !== b.tier) return sellMsg('bad', 'One sale = one tier. Finish this sale first.');
-    s.items.push({ booklet_serial: id, tier: b.tier });
-    sellMsg('ok', id + ' added.');
+function stepBooklets(tier, dir) {
+  const s = state.sell; $('#saleResult').innerHTML = '';
+  if (dir > 0) {
+    const next = state.booklets.filter((b) => b.tier === tier && isAvail(b) && !s.items.some((i) => i.kind === 'booklet' && i.booklet_serial === b.booklet_serial))
+      .sort((a, b) => a.booklet_serial.localeCompare(b.booklet_serial))[0];
+    if (!next) return sellMsg('warn', `No more ${tierName(tier)} booklets in stock.`);
+    addBooklet(next.booklet_serial);
+  } else {
+    const mine = cartBooklets(tier).sort((a, b) => a.booklet_serial.localeCompare(b.booklet_serial));
+    if (!mine.length) return;
+    const last = mine[mine.length - 1];
+    s.items = s.items.filter((i) => i !== last); sellMsg();
   }
   refreshSell();
 }
 
-$('#sellType').addEventListener('click', (e) => {
-  const v = e.target.closest('button')?.dataset.v; if (!v || v === state.sell.type) return;
-  if (state.sell.items.length && !window.confirm('Switching clears the items you have added. Continue?')) return;
-  state.sell.type = v; state.sell.items = []; state.sell.priceTouched = false;
-  $$('#sellType button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
-  $('#bookletMode').classList.toggle('hidden', v !== 'Full Booklet');
-  $('#singleMode').classList.toggle('hidden', v === 'Full Booklet');
-  sellMsg(); refreshSell();
-});
+function addBooklet(id) {
+  const s = state.sell;
+  const b = state.booklets.find((x) => x.booklet_serial === id);
+  if (!b) return sellMsg('bad', 'Unknown booklet ' + id + '.'), false;
+  if (!isAvail(b)) return sellMsg('bad', `${id} is not available (${b.status}). Sell its remaining coupons as singles.`), false;
+  const dropped = s.items.filter((i) => i.kind === 'single' && i.booklet_serial === id).length;
+  s.items = s.items.filter((i) => !(i.kind === 'single' && i.booklet_serial === id));
+  s.items.push({ kind: 'booklet', booklet_serial: id, tier: b.tier });
+  sellMsg('ok', `${id} added${dropped ? ` — replaced ${dropped} single coupon${dropped > 1 ? 's' : ''} from it` : ''}.`);
+  return true;
+}
+
+function toggleBooklet(id) {
+  const s = state.sell; $('#saleResult').innerHTML = '';
+  const i = s.items.findIndex((x) => x.kind === 'booklet' && x.booklet_serial === id);
+  if (i >= 0) { s.items.splice(i, 1); sellMsg(); } else addBooklet(id);
+  refreshSell();
+}
+
 $('#sellCamBtn').addEventListener('click', (e) => startScanner('sellScanner', e.currentTarget, (t) => addToCart(t)));
 $('#sellManual').addEventListener('submit', (e) => { e.preventDefault(); const v = $('#sellSerial').value; if (v.trim()) addToCart(v); $('#sellSerial').value = ''; });
 
-function sellMsg(kind, text) { $('#sellMsg').innerHTML = kind ? `<div class="alert ${kind}">${esc(text)}</div>` : ''; }
+function sellMsg(kind, html, isHtml) {
+  $('#sellMsg').innerHTML = kind ? `<div class="alert ${kind}">${isHtml ? html : esc(html)}</div>` : '';
+}
 
 async function addToCart(raw) {
   const s = state.sell, code = normSerial(raw);
   $('#saleResult').innerHTML = '';
-  if (/^HTTPS?:/.test(code)) return sellMsg('warn', 'That is the Maps QR on the back — scan the QR code on the front.');
+  if (/^HTTPS?:/.test(code)) return sellMsg('warn', 'That is the Google Maps QR on the back — scan the QR code on the front.');
   if (isBookletId(code)) {
-    if (s.type !== 'Full Booklet') return sellMsg('warn', 'That is a booklet number. Switch to "Full booklet(s)" to sell a whole booklet.');
-    if (s.items.some((i) => i.booklet_serial === code)) return sellMsg('warn', code + ' is already in this sale.');
-    return toggleBooklet(code);
+    if (s.items.some((i) => i.kind === 'booklet' && i.booklet_serial === code)) return sellMsg('warn', code + ' is already in this order.');
+    if (!state.booklets.length) await loadBooklets();
+    addBooklet(code); return refreshSell();
   }
   try {
     const r = await api('lookup', { serial: code });
     if (!r.ok) throw fail(r);
     const c = r.coupon;
     if (!c) return sellMsg('bad', r.verdict === 'INVALID' ? `${code} is not a valid serial — check it.` : `${code} is not in the register.`);
-    if (s.type === 'Full Booklet') {
-      if (s.items.some((i) => i.booklet_serial === c.booklet_serial)) return sellMsg('warn', c.booklet_serial + ' is already in this sale.');
-      await loadBooklets();
-      return toggleBooklet(c.booklet_serial);
-    }
+    if (s.items.some((i) => i.kind === 'booklet' && i.booklet_serial === c.booklet_serial)) return sellMsg('warn', `${c.serial} is already in this order inside booklet ${c.booklet_serial}.`);
     if (c.status !== 'In Stock') return sellMsg('bad', `${code} cannot be sold — it is ${c.status}${c.sold_to ? ' (to ' + c.sold_to + ')' : ''}.`);
-    if (s.items.some((i) => i.serial === c.serial)) return sellMsg('warn', code + ' is already in the cart.');
-    if (cartTier() && cartTier() !== c.tier) return sellMsg('bad', 'One sale = one tier. This cart is ' + cartTier() + '.');
-    s.items.push({ serial: c.serial, tier: c.tier, booklet_serial: c.booklet_serial, coupon_no: c.coupon_no });
-    sellMsg('ok', `${c.serial} added (${c.tier}).`);
+    if (s.items.some((i) => i.serial === c.serial)) return sellMsg('warn', code + ' is already in this order.');
+    s.items.push({ kind: 'single', serial: c.serial, tier: c.tier, booklet_serial: c.booklet_serial, coupon_no: c.coupon_no });
+    const bk = state.booklets.find((b) => b.booklet_serial === c.booklet_serial);
+    if (bk && isAvail(bk)) {
+      sellMsg('ok', `${esc(c.serial)} added as a single ${esc(tierName(c.tier))} coupon.
+        <button type="button" class="linkbtn" id="wholeBk">Sell the whole booklet ${esc(c.booklet_serial)} instead</button>`, true);
+      $('#wholeBk').onclick = () => { addBooklet(c.booklet_serial); refreshSell(); };
+    } else sellMsg('ok', `${c.serial} added as a single ${tierName(c.tier)} coupon.`);
     refreshSell();
   } catch (err) { sellMsg('bad', err.message); }
 }
 
-function renderCart() {
-  const s = state.sell;
-  $('#cart').innerHTML = s.items.map((it, i) => `<li><span class="chip ${esc(it.tier)}">${esc(it.tier)}</span>
-     <code>${esc(it.serial || it.booklet_serial)}</code>
-     <span class="small muted">${it.serial ? 'booklet ' + esc(it.booklet_serial) : COUPONS_PER_BOOKLET + ' coupons'}</span>
-     <button class="x" data-i="${i}" title="Remove">×</button></li>`).join('');
-  $$('#cart .x').forEach((b) => b.addEventListener('click', () => { s.items.splice(Number(b.dataset.i), 1); refreshSell(); }));
-  const n = s.items.length;
-  $('#cartSummary').textContent = !n ? 'Nothing added yet.' : s.type === 'Full Booklet'
-    ? `${n} booklet${n > 1 ? 's' : ''} = ${n * COUPONS_PER_BOOKLET} coupons`
-    : `${n} coupon${n > 1 ? 's' : ''}`;
+function renderSingles() {
+  const list = cartSingles();
+  $('#singlesList').innerHTML = list.map((it) => `<li><span class="chip ${esc(it.tier)}">${esc(tierName(it.tier))}</span>
+     <code>${esc(it.serial)}</code><span class="hint">${esc(shortBk(it.booklet_serial))} · #${esc(it.coupon_no)}</span>
+     <button type="button" class="x" data-rm="${esc(it.serial)}" aria-label="Remove ${esc(it.serial)}">×</button></li>`).join('');
+  $$('#singlesList [data-rm]').forEach((b) => b.addEventListener('click', () => {
+    state.sell.items = state.sell.items.filter((i) => i.serial !== b.dataset.rm); refreshSell(); }));
 }
 
 function renderCustomerSelect() {
   const sel = $('#custSelect'), cur = sel.value;
-  sel.innerHTML = '<option value="">— choose customer —</option>' + state.customers.map((c) =>
+  sel.innerHTML = '<option value="">Choose a customer…</option>' + state.customers.map((c) =>
     `<option value="${esc(c.customer_id)}">${esc(c.name)} (${esc(c.type)})</option>`).join('');
   if (cur) sel.value = cur;
   const fc = $('#fCust');
   if (fc) { const v = fc.value; fc.innerHTML = '<option value="">All</option>' + state.customers.map((c) => `<option value="${esc(c.customer_id)}">${esc(c.name)}</option>`).join(''); fc.value = v; }
 }
-$('#custSelect').addEventListener('change', () => { state.sell.priceTouched = false; refreshSell(); });
-$('#newCustBtn').addEventListener('click', () => customerModal(null, (c) => { $('#custSelect').value = c.customer_id; state.sell.priceTouched = false; refreshSell(); }));
+$('#custSelect').addEventListener('change', () => { state.sell.touched = {}; refreshSell(); });
+$('#newCustBtn').addEventListener('click', () => customerModal(null, (c) => { $('#custSelect').value = c.customer_id; state.sell.touched = {}; refreshSell(); }));
 
-function agreedRate() {
-  const c = state.customers.find((x) => x.customer_id === $('#custSelect').value), tier = cartTier();
-  if (!c || !tier) return { cust: c, rate: null };
-  const key = tier.toLowerCase() + (state.sell.type === 'Full Booklet' ? '_booklet_rate' : '_single_rate');
-  return { cust: c, rate: c[key] ?? null };
+function renderLines() {
+  const s = state.sell, lines = orderLines();
+  const cust = state.customers.find((x) => x.customer_id === $('#custSelect').value);
+  // agreed rates fill in until the person types their own price
+  lines.forEach((l) => { if (!s.touched[l.key]) s.prices[l.key] = l.rate !== null ? String(l.rate) : ''; });
+  const fresh = orderLines();
+  $('#orderLines').innerHTML = !fresh.length
+    ? '<p class="empty">Nothing in this order yet. Add booklets above, or scan single coupons.</p>'
+    : fresh.map((l) => `<div class="line ${l.tier}" data-line="${esc(l.key)}">
+        <div class="line-head"><span class="medal ${l.tier}" aria-hidden="true"></span><b>${esc(l.label)}</b>
+          <span class="qty num">× ${l.qty}</span></div>
+        <div class="line-sub">${l.type === 'Full Booklet' ? esc(l.items.map((i) => shortBk(i.booklet_serial)).join(', ')) + ` · ${l.qty * COUPONS_PER_BOOKLET} coupons` : `${l.qty} coupon${l.qty > 1 ? 's' : ''}`}</div>
+        <div class="line-price">
+          <label for="price_${esc(l.key.replace(/\W/g, ''))}">Price per ${l.unit}</label>
+          <div class="money-in"><span>GHS</span><input id="price_${esc(l.key.replace(/\W/g, ''))}" data-price="${esc(l.key)}" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Required" value="${esc(s.prices[l.key] ?? '')}"></div>
+          <b class="subtotal num" data-sub="${esc(l.key)}">${money(l.subtotal)}</b>
+        </div>
+        <div class="line-note" data-note="${esc(l.key)}">${lineNote(l, cust)}</div>
+      </div>`).join('');
+  $$('#orderLines [data-price]').forEach((inp) => inp.addEventListener('input', () => {
+    s.prices[inp.dataset.price] = inp.value; s.touched[inp.dataset.price] = true; updateTotals(); }));
+  updateTotals();
 }
-function qty() { return state.sell.items.length; }
+function lineNote(l, cust) {
+  if (!cust) return '<span class="hint">Choose the customer to load their agreed rate.</span>';
+  if (l.override) return `<span class="chip warn">Override</span> <span class="hint">Agreed rate is ${money(l.rate)} — this sale will be flagged.</span>`;
+  if (l.rate !== null) return `<span class="hint">Agreed rate for ${esc(cust.name)}.</span>`;
+  return `<span class="hint">No agreed rate — type the price agreed for this sale.</span>`;
+}
+function updateTotals() {
+  const lines = orderLines(), cust = state.customers.find((x) => x.customer_id === $('#custSelect').value);
+  lines.forEach((l) => {
+    const sub = $(`[data-sub="${CSS.escape(l.key)}"]`); if (sub) sub.textContent = money(l.subtotal);
+    const note = $(`[data-note="${CSS.escape(l.key)}"]`); if (note) note.innerHTML = lineNote(l, cust);
+  });
+  const total = orderTotal(lines);
+  $('#saleTotal').textContent = money(total);
+  const nb = cartBooklets().length, ns = cartSingles().length, coupons = nb * COUPONS_PER_BOOKLET + ns;
+  const parts = [];
+  if (nb) parts.push(`${nb} booklet${nb > 1 ? 's' : ''}`);
+  if (ns) parts.push(`${ns} single${ns > 1 ? 's' : ''}`);
+  $('#orderBarText').innerHTML = parts.length ? `<b>${parts.join(' + ')}</b><span>${coupons} coupons · ${money(total)}</span>` : '';
+  $('#orderBar').classList.toggle('hidden', !parts.length);
+}
+$('#orderBarGo').addEventListener('click', () => $('#checkout').scrollIntoView({ behavior: 'smooth', block: 'start' }));
 
-function refreshSell() {
-  renderCart(); renderBookletPick();
-  const { cust, rate } = agreedRate();
-  const per = state.sell.type === 'Full Booklet' ? 'per booklet' : 'per coupon';
-  $('#unitPriceLabel').textContent = `Price ${per} (GHS)`;
-  const priceEl = $('#unitPrice');
-  if (!state.sell.priceTouched) priceEl.value = rate !== null ? rate : '';
-  if (!cust || !qty()) $('#rateHint').textContent = 'Select a customer and add items first.';
-  else if (rate !== null) $('#rateHint').innerHTML = `Agreed rate for <b>${esc(cust.name)}</b>: <b>${money(rate)}</b> ${per} (${esc(cartTier())}). You can change it — changes are flagged.`;
-  else $('#rateHint').innerHTML = `<b>${esc(cust.name)}</b> has no agreed ${esc(cartTier())} rate ${per}. <b>Type the price agreed for this sale.</b>`;
-  updateTotal();
-}
-function updateTotal() {
-  const p = Number($('#unitPrice').value), { rate } = agreedRate();
-  $('#saleTotal').textContent = money(p > 0 ? Math.round(p * qty() * 100) / 100 : 0);
-  $('#overrideWarn').classList.toggle('hidden', !(rate !== null && $('#unitPrice').value !== '' && Math.abs(p - rate) >= 0.005));
-}
-$('#unitPrice').addEventListener('input', () => { state.sell.priceTouched = true; updateTotal(); });
+function refreshSell() { renderBookletPick(); renderSingles(); renderLines(); }
 
 function segPick(id, key) {
   $(id).addEventListener('click', (e) => {
     const v = e.target.closest('button')?.dataset.v; if (!v) return;
-    state.sell[key] = v; $$(id + ' button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+    state.sell[key] = v; $$(id + ' button').forEach((b) => { b.classList.toggle('on', b.dataset.v === v); b.setAttribute('aria-pressed', b.dataset.v === v); });
     if (key === 'status') $('#amountPaidWrap').classList.toggle('hidden', v !== 'Part-paid');
   });
 }
 segPick('#payMethod', 'method'); segPick('#payStatus', 'status');
 
 $('#confirmSale').addEventListener('click', async (e) => {
-  const s = state.sell, { cust, rate } = agreedRate();
-  const price = Number($('#unitPrice').value), total = Math.round(price * qty() * 100) / 100;
+  const s = state.sell, lines = orderLines(), total = orderTotal(lines);
+  const cust = state.customers.find((x) => x.customer_id === $('#custSelect').value);
   $('#saleResult').innerHTML = '';
   const problems = [];
-  if (!qty()) problems.push('Add at least one ' + (s.type === 'Full Booklet' ? 'booklet' : 'coupon') + '.');
-  if (!cust) problems.push('Select a customer.');
-  if (!($('#unitPrice').value !== '' && price > 0)) problems.push('Enter the price.');
+  if (!lines.length) problems.push('Add at least one booklet or coupon.');
+  if (!cust) problems.push('Choose the customer.');
+  lines.forEach((l) => { if (!(l.price > 0)) problems.push(`Enter the price per ${l.unit} for ${l.label}.`); });
   if (!s.method) problems.push('Choose a payment method.');
   if (!s.status) problems.push('Choose a payment status.');
   const paid = Number($('#amountPaid').value);
-  if (s.status === 'Part-paid' && !(paid > 0 && paid < total)) problems.push(`Enter the amount received (between 0 and ${total}).`);
+  if (s.status === 'Part-paid' && !(paid > 0 && paid < total)) problems.push(`Enter the amount received (more than 0, less than ${money(total)}).`);
   if (problems.length) { $('#saleResult').innerHTML = `<div class="alert bad">${problems.map(esc).join('<br>')}</div>`; return; }
-  const override = rate !== null && Math.abs(price - rate) >= 0.005;
+  const coupons = lines.reduce((a, l) => a + (l.type === 'Full Booklet' ? l.qty * COUPONS_PER_BOOKLET : l.qty), 0);
   const ok = await confirmBox('Confirm sale', `
-    <p><b>${esc(cust.name)}</b> · <span class="chip ${esc(cartTier())}">${esc(cartTier())}</span></p>
-    <p>${s.type === 'Full Booklet' ? qty() + ' booklet(s): ' + s.items.map((i) => esc(i.booklet_serial)).join(', ') : qty() + ' single coupon(s)'}</p>
-    <p>${money(price)} × ${qty()} = <b>${money(total)}</b></p>
-    <p>${esc(s.method)} · ${esc(s.status)}${s.status === 'Part-paid' ? ' (' + money(paid) + ' received)' : ''}</p>
-    ${override ? `<div class="alert warn">Override: agreed rate is ${money(rate)}.</div>` : ''}`, 'Confirm sale');
+    <p class="cb-cust"><b>${esc(cust.name)}</b><span class="hint">${coupons} coupons</span></p>
+    <table class="cb-lines">${lines.map((l) => `<tr><td><span class="chip ${l.tier}">${tierName(l.tier)}</span> ${esc(l.type === 'Full Booklet' ? 'Booklets' : 'Singles')}
+      ${l.type === 'Full Booklet' ? `<div class="hint">${esc(l.items.map((i) => i.booklet_serial).join(', '))}</div>` : ''}</td>
+      <td class="r num">${l.qty} × ${money(l.price)}${l.override ? ' <span class="chip warn">Override</span>' : ''}</td><td class="r num"><b>${money(l.subtotal)}</b></td></tr>`).join('')}
+      <tr class="cb-total"><td colspan="2">Total</td><td class="r num"><b>${money(total)}</b></td></tr></table>
+    <p class="hint">${esc(s.method)} · ${esc(s.status)}${s.status === 'Part-paid' ? ' — ' + money(paid) + ' received now' : ''}</p>`, 'Confirm sale');
   if (!ok) return;
   const btn = e.currentTarget; busy(btn, true, 'Saving sale…');
   try {
     const r = await api('sell', {
-      sale_type: s.type, customer_id: cust.customer_id, unit_price: price,
-      booklets: s.type === 'Full Booklet' ? s.items.map((i) => i.booklet_serial) : [],
-      serials: s.type === 'Single Coupons' ? s.items.map((i) => i.serial) : [],
-      payment_method: s.method, payment_status: s.status, amount_paid: paid || 0, notes: $('#saleNotes').value,
+      customer_id: cust.customer_id, payment_method: s.method, payment_status: s.status,
+      amount_paid: paid || 0, notes: $('#saleNotes').value,
+      lines: lines.map((l) => ({ sale_type: l.type, unit_price: l.price,
+        booklets: l.type === 'Full Booklet' ? l.items.map((i) => i.booklet_serial) : [],
+        serials: l.type === 'Single Coupons' ? l.items.map((i) => i.serial) : [] })),
     });
     if (!r.ok) throw fail(r);
-    const x = r.sale;
-    $('#saleResult').innerHTML = `<div class="alert ok">✅ Sale <b>${esc(x.sale_id)}</b> saved — ${x.coupon_count} ${esc(x.tier)} coupons to ${esc(x.buyer_name)}, ${money(x.total_amount)} (${esc(x.payment_status)}).
-      ${x.price_overridden ? '<br>Price override recorded.' : ''}</div>`;
-    s.items = []; s.priceTouched = false; $('#saleNotes').value = ''; $('#amountPaid').value = '';
+    const o = r.order || { order_id: r.sale.sale_id, coupon_count: r.sale.coupon_count, buyer_name: r.sale.buyer_name, total_amount: r.sale.total_amount, payment_status: r.sale.payment_status, lines: [r.sale] };
+    $('#saleResult').innerHTML = `<div class="alert ok sale-done"><b>Sale saved · ${esc(o.order_id)}</b>
+      ${o.coupon_count} coupons to ${esc(o.buyer_name)} — ${money(o.total_amount)} (${esc(o.payment_status)}).
+      ${o.lines.length > 1 ? `<div class="hint">${o.lines.map((x) => `${esc(x.sale_id)}: ${esc(tierName(x.tier))} ${x.sale_type === 'Full Booklet' ? 'booklets' : 'singles'} × ${x.quantity}`).join(' · ')}</div>` : ''}
+      ${o.lines.some((x) => x.price_overridden) ? '<div class="hint">Price override recorded.</div>' : ''}</div>`;
+    s.items = []; s.prices = {}; s.touched = {}; $('#saleNotes').value = ''; $('#amountPaid').value = '';
     sellMsg(); await loadBooklets(); refreshSell();
+    $('#saleResult').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (err) { $('#saleResult').innerHTML = `<div class="alert bad">${esc(err.message)}</div>`; }
   finally { busy(btn, false); }
 });
@@ -426,7 +520,7 @@ function customerModal(c, onSaved) {
       : '<p class="small muted">Agreed rates can only be set by the manager.</p>'}
     <div class="field"><label>Notes</label><input id="cmNotes" value="${esc(c?.notes)}"></div>
     <div id="cmMsg"></div>
-    <div class="row"><button class="btn light" data-close>Cancel</button><button class="btn primary" id="cmSave">Save</button></div>`, (m, close) => {
+    <div class="row"><button class="btn quiet" data-close>Cancel</button><button class="btn primary" id="cmSave">Save</button></div>`, (m, close) => {
     $('#cmType', m).value = c?.type || 'Company';
     $('#cmSave', m).onclick = async (e) => {
       const body = { type: $('#cmType', m).value, name: $('#cmName', m).value, contact_person: $('#cmContact', m).value,
@@ -449,7 +543,7 @@ function renderCustomerTable() {
     (state.customers.map((c) => `<tr><td><b>${esc(c.name)}</b><div class="small muted">${esc(c.customer_id)}</div></td><td>${esc(c.type)}</td>
       <td>${esc(c.contact_person)}<div class="small muted">${esc(c.phone)}</div></td>
       ${RATE_FIELDS.map(([k]) => `<td class="r num">${c[k] === null ? '<span class="muted">—</span>' : money(c[k])}</td>`).join('')}
-      <td><button class="btn light sm" data-edit="${esc(c.customer_id)}">Edit</button></td></tr>`).join('') ||
+      <td><button class="btn quiet sm" data-edit="${esc(c.customer_id)}">Edit</button></td></tr>`).join('') ||
      '<tr><td colspan="8" class="muted">No customers yet.</td></tr>') + '</tbody>';
   $$('[data-edit]').forEach((b) => b.addEventListener('click', () => customerModal(state.customers.find((c) => c.customer_id === b.dataset.edit))));
 }
@@ -461,42 +555,45 @@ async function loadDashboard() {
   try {
     const d = await api('dashboard'); if (!d.ok) throw fail(d);
     const t = d.tiers;
-    const tierCard = (k) => { const x = t[k]; return `<div class="card"><h3><span class="chip ${k}">${k}</span></h3>
-      <div class="kpis">
-        <div class="kpi ${k}"><div class="v num">${x.sold_ever}</div><div class="l">Sold</div></div>
-        <div class="kpi ${k}"><div class="v num">${x.redeemed}</div><div class="l">Redeemed</div></div>
-        <div class="kpi ${k}"><div class="v num">${x.outstanding}</div><div class="l">Outstanding</div></div>
-        <div class="kpi ${k}"><div class="v num">${x.in_stock}</div><div class="l">In stock</div></div>
-      </div>
-      <p class="small" style="margin:.7rem 0 0">Redemption rate <b>${x.redemption_rate}%</b>${x.void ? ` · ${x.void} void` : ''}</p>
-      <div class="bar"><i style="width:${Math.min(100, x.redemption_rate)}%"></i></div>
-      <p class="small" style="margin:.7rem 0 0">Revenue <b>${money(x.revenue)}</b> · paid ${money(x.paid)} · outstanding ${money(x.balance)}</p></div>`; };
+    const tierCard = (k) => { const x = t[k]; return `<section class="card tiercard ${k}">
+      <div class="tc-head"><span class="medal ${k}" aria-hidden="true"></span><h2>${tierName(k)}</h2>
+        <span class="hint">${x.total} coupons printed</span></div>
+      <dl class="stats">
+        <div><dt>Sold</dt><dd class="num">${x.sold_ever}</dd></div>
+        <div><dt>Redeemed</dt><dd class="num">${x.redeemed}</dd></div>
+        <div><dt>Outstanding</dt><dd class="num">${x.outstanding}</dd></div>
+        <div><dt>In stock</dt><dd class="num">${x.in_stock}</dd></div>
+      </dl>
+      <div class="meter-row"><span>Redemption rate</span><b class="num">${x.redemption_rate}%</b></div>
+      <div class="bar" role="img" aria-label="Redemption rate ${x.redemption_rate}%"><i style="width:${Math.min(100, x.redemption_rate)}%"></i></div>
+      <p class="tc-money">Revenue <b class="num">${money(x.revenue)}</b><span>Paid ${money(x.paid)} · Owed ${money(x.balance)}${x.void ? ` · ${x.void} void` : ''}</span></p>
+    </section>`; };
     const kv = (obj) => Object.keys(obj).length ? Object.entries(obj).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r num">${money(v)}</td></tr>`).join('') : '<tr><td class="muted">No sales yet</td><td></td></tr>';
     body.innerHTML = `
-      <div class="kpis" style="margin-bottom:1rem">
-        <div class="kpi accent"><div class="v num">${money(d.totals.revenue)}</div><div class="l">Total billed</div></div>
-        <div class="kpi accent"><div class="v num">${money(d.totals.paid)}</div><div class="l">Received</div></div>
-        <div class="kpi accent"><div class="v num">${money(d.totals.balance)}</div><div class="l">Owed to us</div></div>
+      <div class="money-band">
+        <div><span>Total billed</span><b class="num">${money(d.totals.revenue)}</b></div>
+        <div><span>Received</span><b class="num">${money(d.totals.paid)}</b></div>
+        <div class="${d.totals.balance > 0 ? 'owed' : ''}"><span>Owed to us</span><b class="num">${money(d.totals.balance)}</b></div>
       </div>
       <div class="grid2">${tierCard('GOLD')}${tierCard('SILVER')}</div>
+      <section class="card"><h2>Redemptions per day <span class="hint">last 30 days</span></h2>${dailyChart(d.daily)}</section>
       <div class="grid2">
-        <div class="card"><h3>Revenue by payment method</h3><table>${kv(d.by_method)}</table></div>
-        <div class="card"><h3>Revenue by payment status</h3><table>${kv(d.by_payment_status)}</table></div>
+        <section class="card"><h2>By payment method</h2><table class="kv">${kv(d.by_method)}</table></section>
+        <section class="card"><h2>By payment status</h2><table class="kv">${kv(d.by_payment_status)}</table></section>
       </div>
-      <div class="card"><h3>Daily patronage — redemptions per day (last 30 days)</h3>${dailyChart(d.daily)}</div>
-      <div class="card"><h3>Per company</h3><div class="tablewrap"><table><thead><tr><th>Customer</th><th class="r">Bought</th><th class="r">Redeemed</th>
+      <section class="card flush"><h2 class="pad">Per customer</h2><div class="tablewrap"><table><thead><tr><th>Customer</th><th class="r">Bought</th><th class="r">Redeemed</th>
         <th class="r">Outstanding</th><th class="r">Billed</th><th class="r">Paid</th><th class="r">Owes</th><th class="r">Avg / coupon</th></tr></thead><tbody>
-        ${d.companies.map((c) => `<tr><td><b>${esc(c.name)}</b><div class="small muted">${c.gold ? c.gold + ' Gold ' : ''}${c.silver ? c.silver + ' Silver' : ''}</div></td>
-          <td class="r num">${c.bought}</td><td class="r num">${c.redeemed} <span class="small muted">(${c.redemption_rate}%)</span></td>
+        ${d.companies.map((c) => `<tr><td><b>${esc(c.name)}</b><div class="hint">${c.gold ? c.gold + ' Gold ' : ''}${c.silver ? c.silver + ' Silver' : ''}</div></td>
+          <td class="r num">${c.bought}</td><td class="r num">${c.redeemed} <span class="hint">(${c.redemption_rate}%)</span></td>
           <td class="r num">${c.outstanding}</td><td class="r num">${money(c.billed)}</td><td class="r num">${money(c.paid)}</td>
-          <td class="r num">${c.balance > 0 ? `<b style="color:var(--bad)">${money(c.balance)}</b>` : money(0)}</td><td class="r num">${money(c.avg_price)}</td></tr>`).join('')
-          || '<tr><td colspan="8" class="muted">No sales yet.</td></tr>'}</tbody></table></div></div>
-      <p class="small muted">Updated ${esc(when(d.generated_at))}</p>`;
+          <td class="r num">${c.balance > 0 ? `<b class="owe">${money(c.balance)}</b>` : money(0)}</td><td class="r num">${money(c.avg_price)}</td></tr>`).join('')
+          || '<tr><td colspan="8" class="muted">No sales yet.</td></tr>'}</tbody></table></div></section>
+      <p class="hint">Updated ${esc(when(d.generated_at))}</p>`;
   } catch (err) { body.innerHTML = `<div class="alert bad">${esc(err.message)}</div>`; }
 }
 
 function dailyChart(days) {
-  const W = 720, H = 220, P = { l: 30, r: 8, t: 10, b: 28 };
+  const W = Math.round(Math.max(320, Math.min(760, ($('#dashBody')?.clientWidth || 720) - 40))), H = W < 500 ? 200 : 220, P = { l: 28, r: 8, t: 10, b: 28 };
   const max = Math.max(1, ...days.map((d) => d.GOLD + d.SILVER));
   const bw = (W - P.l - P.r) / days.length, sy = (H - P.t - P.b) / max;
   const ticks = [0, Math.ceil(max / 2), max];
@@ -508,7 +605,7 @@ function dailyChart(days) {
     if (hs) s += `<rect x="${x}" y="${base - hs}" width="${w}" height="${hs}" rx="2" fill="#8C96A3"><title>${tip}</title></rect>`;
     if (hg) s += `<rect x="${x}" y="${base - hs - hg}" width="${w}" height="${hg}" rx="2" fill="#D89A10"><title>${tip}</title></rect>`;
     if (!hs && !hg) s += `<rect x="${x}" y="${base - 1}" width="${w}" height="1" fill="#E6E3DF"><title>${tip}</title></rect>`;
-    if (i % 5 === 0 || i === days.length - 1) s += `<text x="${x + w / 2}" y="${H - 9}" font-size="11" text-anchor="middle" fill="#6B7280">${d.date.slice(5)}</text>`;
+    if (i % (W < 500 ? 7 : 5) === 0 || i === days.length - 1) s += `<text x="${x + w / 2}" y="${H - 9}" font-size="11" text-anchor="middle" fill="#6B7280">${d.date.slice(5)}</text>`;
   });
   return s + `</svg><div class="legend"><span><i style="background:#D89A10"></i>Gold</span><span><i style="background:#8C96A3"></i>Silver</span></div>`;
 }
@@ -516,8 +613,11 @@ function dailyChart(days) {
 // ------------------------------------------------------------------ BOOKLETS (manager)
 async function renderBookletList() {
   await loadBooklets();
-  $('#bookletList').innerHTML = state.booklets.map((b) => `<button data-b="${esc(b.booklet_serial)}"><b>${esc(b.booklet_serial)}</b>
-    <span class="chip ${esc(b.tier)}">${esc(b.tier)}</span> <span class="small muted">${esc(b.status)}${b.sold_to ? ' · ' + esc(b.sold_to) : ''} · ${b.in_stock}/45 in stock</span></button>`).join('');
+  $('#bookletList').innerHTML = state.booklets.map((b) => `<button class="bkcard ${esc(b.tier)}" data-b="${esc(b.booklet_serial)}">
+    <span class="medal ${esc(b.tier)}" aria-hidden="true"></span><b>${esc(b.booklet_serial)}</b>
+    <span class="st">${esc(b.status)}${b.sold_to ? ' · ' + esc(b.sold_to) : ''}</span>
+    <span class="bar thin"><i style="width:${Math.round(100 * b.in_stock / COUPONS_PER_BOOKLET)}%"></i></span>
+    <span class="hint">${b.in_stock}/${COUPONS_PER_BOOKLET} in stock</span></button>`).join('');
   $$('#bookletList button').forEach((btn) => btn.addEventListener('click', () => showBooklet(btn.dataset.b)));
 }
 async function showBooklet(id) {
@@ -545,7 +645,7 @@ function couponModal(c, bookletId) {
     <tr><td>Redeemed</td><td>${c.redeemed_at ? esc(when(c.redeemed_at)) + ' by ' + esc(c.redeemed_by) : '—'}</td></tr></table>
     ${canVoid ? `<div class="field" style="margin-top:1rem"><label>Void this coupon (lost / damaged / stolen) — reason</label><input id="voidReason"></div>` : ''}
     <div id="vMsg"></div>
-    <div class="row" style="margin-top:.8rem"><button class="btn light" data-close>Close</button>${canVoid ? '<button class="btn bad" id="voidBtn">Void coupon</button>' : ''}</div>`, (m, close) => {
+    <div class="row" style="margin-top:.8rem"><button class="btn quiet" data-close>Close</button>${canVoid ? '<button class="btn bad" id="voidBtn">Void coupon</button>' : ''}</div>`, (m, close) => {
     const vb = $('#voidBtn', m); if (!vb) return;
     vb.onclick = async () => {
       const reason = $('#voidReason', m).value.trim();
@@ -583,7 +683,7 @@ function filteredTx() {
     if (f.cust && t.customer_id !== f.cust) return false;
     if (f.staff && t.staff !== f.staff) return false;
     if (f.ov && !t.price_overridden) return false;
-    if (f.q && !(String(t.serials || '') + ' ' + String(t.sale_id || '') + ' ' + String(t.booklets || '')).toUpperCase().includes(f.q)) return false;
+    if (f.q && !(String(t.serials || '') + ' ' + String(t.sale_id || '') + ' ' + String(t.order_id || '') + ' ' + String(t.booklets || '')).toUpperCase().includes(f.q)) return false;
     return true;
   });
 }
@@ -591,16 +691,16 @@ function renderLog() {
   const rows = filteredTx();
   const sales = rows.filter((t) => t.kind === 'Sale');
   const billed = sales.reduce((a, t) => a + Number(t.total_amount || 0), 0);
-  $('#logCount').innerHTML = `${rows.length} entries · ${sales.length} sales (${money(billed)}) · ${rows.length - sales.length} redemptions`;
+  $('#logCount').innerHTML = `${rows.length} entries · ${sales.length} sale lines (${money(billed)}) · ${rows.length - sales.length} redemptions`;
   $('#logTable').innerHTML = `<thead><tr><th>When</th><th>Type</th><th>Customer</th><th>Tier</th><th>Details</th><th class="r">Qty</th>
     <th class="r">Unit price</th><th class="r">Total</th><th>Payment</th><th>Price</th><th>Staff</th></tr></thead><tbody>` +
     (rows.map((t) => t.kind === 'Sale'
-      ? `<tr class="${t.price_overridden ? 'override' : ''}"><td class="small">${esc(when(t.timestamp))}<div class="muted">${esc(t.sale_id)}</div></td>
+      ? `<tr class="${t.price_overridden ? 'override' : ''}"><td class="small">${esc(when(t.timestamp))}<div class="muted">${esc(t.sale_id)}</div>${t.order_id && t.order_id !== t.sale_id ? `<div class="muted">order ${esc(t.order_id)}</div>` : ''}</td>
           <td><span class="chip">Sale</span></td><td>${esc(t.customer)}</td><td><span class="chip ${esc(t.tier)}">${esc(t.tier)}</span></td>
           <td class="small">${esc(t.sale_type)}${t.booklets ? ': ' + esc(t.booklets) : ''}<div class="muted">${t.coupon_count} coupons</div></td>
           <td class="r num">${esc(t.quantity)}</td><td class="r num">${money(t.unit_price)}</td><td class="r num"><b>${money(t.total_amount)}</b></td>
           <td class="small">${esc(t.payment_method)}<br><span class="chip ${t.payment_status === 'Paid' ? 'ok' : t.payment_status === 'Unpaid' ? 'bad' : 'warn'}">${esc(t.payment_status)}</span>
-            ${Number(t.balance) > 0 ? `<div>owes ${money(t.balance)}</div><button class="btn light sm" data-pay="${esc(t.sale_id)}">Record payment</button>` : ''}</td>
+            ${Number(t.balance) > 0 ? `<div>owes ${money(t.balance)}</div><button class="btn quiet sm" data-pay="${esc(t.sale_id)}">Record payment</button>` : ''}</td>
           <td class="small">${t.price_overridden ? `<span class="chip warn">Override</span><div class="muted">agreed ${money(t.agreed_rate)}</div>` : esc(t.price_source)}</td>
           <td class="small">${esc(t.staff)}</td></tr>`
       : `<tr><td class="small">${esc(when(t.timestamp))}</td><td><span class="chip ok">Redeemed</span></td><td>${esc(t.customer)}</td>
@@ -613,7 +713,7 @@ function paymentModal(t) {
   modal(`<h2>Record payment — ${esc(t.sale_id)}</h2><p>${esc(t.customer)} · total <b>${money(t.total_amount)}</b> · paid so far ${money(t.amount_paid)}</p>
     <div class="field"><label>Total amount paid to date (GHS)</label><input id="pmAmt" type="number" min="0" step="0.01" value="${esc(t.total_amount)}"></div>
     <div class="field"><label>Method</label><select id="pmMethod"><option>Cash</option><option>MoMo</option><option>Bank</option><option>Invoice/Credit</option></select></div>
-    <div id="pmMsg"></div><div class="row"><button class="btn light" data-close>Cancel</button><button class="btn primary" id="pmSave">Save</button></div>`, (m, close) => {
+    <div id="pmMsg"></div><div class="row"><button class="btn quiet" data-close>Cancel</button><button class="btn primary" id="pmSave">Save</button></div>`, (m, close) => {
     $('#pmMethod', m).value = t.payment_method || 'Cash';
     $('#pmSave', m).onclick = async (e) => {
       busy(e.currentTarget, true, 'Saving…');
@@ -625,7 +725,7 @@ function paymentModal(t) {
 }
 $('#logCsv').addEventListener('click', () => {
   const rows = filteredTx();
-  const cols = ['kind', 'timestamp', 'sale_id', 'customer_id', 'customer', 'buyer_type', 'tier', 'sale_type', 'booklets', 'serials', 'quantity',
+  const cols = ['kind', 'timestamp', 'sale_id', 'order_id', 'customer_id', 'customer', 'buyer_type', 'tier', 'sale_type', 'booklets', 'serials', 'quantity',
                 'coupon_count', 'unit_price', 'agreed_rate', 'price_source', 'price_overridden', 'total_amount', 'payment_method',
                 'payment_status', 'amount_paid', 'balance', 'staff', 'notes'];
   const cell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
@@ -649,7 +749,7 @@ async function loadStaff() {
         <td>${s.active ? '<span class="chip ok">Active</span>' : '<span class="chip bad">Deactivated</span>'}</td>
         <td class="small">${esc(when(s.last_login))}</td>
         <td class="small">${s.updated_at ? esc(when(s.updated_at)) + (s.updated_by ? '<div class="muted">by ' + esc(s.updated_by) + '</div>' : '') : '—'}</td>
-        <td>${s.owner && s.name.toLowerCase() !== state.user.name.toLowerCase() ? '<span class="small muted">Protected</span>' : `<button class="btn light sm" data-staff="${esc(s.name)}">${s.owner ? 'Change PIN' : 'Edit'}</button>`}</td></tr>`).join('') + '</tbody>';
+        <td>${s.owner && s.name.toLowerCase() !== state.user.name.toLowerCase() ? '<span class="small muted">Protected</span>' : `<button class="btn quiet sm" data-staff="${esc(s.name)}">${s.owner ? 'Change PIN' : 'Edit'}</button>`}</td></tr>`).join('') + '</tbody>';
     $$('[data-staff]').forEach((b) => b.addEventListener('click', () => staffModal(state.staff.find((s) => s.name === b.dataset.staff))));
   } catch (err) { $('#staffTable').innerHTML = `<tr><td class="alert bad">${esc(err.message)}</td></tr>`; }
 }
@@ -667,7 +767,7 @@ function staffModal(s) {
     <div class="field"><label>Repeat PIN</label><input id="sfPin2" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password"></div>
     <p class="small muted">Tell the person their PIN privately. It is stored only as a scrambled hash — nobody can look it up later; just set a new one.</p>
     <div id="sfMsg"></div>
-    <div class="row"><button class="btn light" data-close>Cancel</button><button class="btn primary" id="sfSave">${s ? 'Save changes' : 'Create user'}</button></div>`, (m, close) => {
+    <div class="row"><button class="btn quiet" data-close>Cancel</button><button class="btn primary" id="sfSave">${s ? 'Save changes' : 'Create user'}</button></div>`, (m, close) => {
     let role = s?.role || 'Front Desk', active = s ? s.active : true;
     const seg = (id, val, set) => { $$(id + ' button', m).forEach((b) => { b.classList.toggle('on', b.dataset.v === String(val));
       b.onclick = () => { set(b.dataset.v); $$(id + ' button', m).forEach((x) => x.classList.toggle('on', x === b)); }; }); };
@@ -699,7 +799,7 @@ function ownerPinModal(s) {
     <div class="field"><label>New PIN (4–8 digits)</label><input id="opPin" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password"></div>
     <div class="field"><label>Repeat new PIN</label><input id="opPin2" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password"></div>
     <div id="opMsg"></div>
-    <div class="row"><button class="btn light" data-close>Cancel</button><button class="btn primary" id="opSave">Change PIN</button></div>`, (m, close) => {
+    <div class="row"><button class="btn quiet" data-close>Cancel</button><button class="btn primary" id="opSave">Change PIN</button></div>`, (m, close) => {
     $('#opSave', m).onclick = async (e) => {
       const pin = $('#opPin', m).value.trim(), pin2 = $('#opPin2', m).value.trim();
       const msg = (t) => { $('#opMsg', m).innerHTML = `<div class="alert bad">${esc(t)}</div>`; };
@@ -728,6 +828,7 @@ if (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'Mac
 }
 
 // ------------------------------------------------------------------ boot
+if (window.innerWidth < 700) $('#tab-log details.filters')?.removeAttribute('open');
 if (!API || API.startsWith('PASTE_')) $('#configWarn').classList.remove('hidden');
 if (state.token && state.user) api('me').then((r) => { if (r.ok) startApp(); }).catch(() => logout(true));
 refreshSell();
